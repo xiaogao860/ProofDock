@@ -1,0 +1,4 @@
+import {hash} from './remix.mjs';
+export const LOCAL_ENDPOINT='http://127.0.0.1:4320';
+export async function localInfo(){const r=await fetch(LOCAL_ENDPOINT+'/info',{signal:AbortSignal.timeout(3000),cache:'no-store'});if(!r.ok)throw Error('本地编译服务不可用');return r.json();}
+export async function executeLocal(input){const started=Date.now();const r=await fetch(LOCAL_ENDPOINT+'/compile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input),signal:AbortSignal.timeout(25000)});const output=await r.json();if(!r.ok)throw Error(output.error||'本地编译失败');return {service:'local-solidity',environment:'local-demo',endpoint:LOCAL_ENDPOINT+'/compile',httpStatus:r.status,elapsedMs:Date.now()-started,input,inputHash:hash(input),output,outputHash:hash(output),createdAt:new Date().toISOString(),executionStatus:output.success?'COMPILED':'COMPILATION_FAILED',providerSigned:false,paymentResponse:null};}

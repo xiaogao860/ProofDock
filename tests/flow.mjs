@@ -1,0 +1,15 @@
+import fs from 'node:fs';import assert from 'node:assert/strict';import {ethers} from 'ethers';
+const cfg=JSON.parse(fs.readFileSync('data/deployment.json'));const p=new ethers.JsonRpcProvider(cfg.rpc, undefined, {cacheTimeout:-1});p.pollingInterval=50;
+const signers=await Promise.all([0,1,2,3,4].map(i=>p.getSigner(i)));const users=signers.map(s=>({token:new ethers.Contract(cfg.token,cfg.tokenAbi,s),dock:new ethers.Contract(cfg.dock,cfg.dockAbi,s)}));
+const tx=async f=>await(await f).wait();const reject=async f=>{let failed=false;try{await tx(f());}catch{failed=true;}assert(failed,'必须拒绝非法操作');};
+for(let i=1;i<=2;i++)await tx(users[i].token.approve(cfg.dock,ethers.parseEther('100')));
+const id=ethers.id('test-'+Date.now()),q=ethers.id('query-'+Date.now());await tx(users[1].dock.publish(id,ethers.id('evidence')));
+await reject(()=>users[1].dock.publish(id,ethers.id('evidence')));await tx(users[2].dock.query(id,q));assert.equal(await users[0].dock.credits(cfg.accounts[1]),ethers.parseEther('.7'));
+await reject(()=>users[2].dock.query(id,q));assert.equal(await users[0].dock.queryRecords(q),id);
+await tx(users[2].dock.challenge(id,ethers.id('objection')));await reject(()=>users[2].dock.challenge(id,ethers.id('again')));await reject(()=>users[1].dock.requestExit(id));await reject(()=>users[1].dock.resolve(id,2,ethers.id('report')));
+await tx(users[3].dock.resolve(id,2,ethers.id('MANUAL_DEMO')));assert.equal((await users[0].dock.records(id)).state,4n);assert.equal(await users[0].dock.credits(cfg.accounts[2]),ethers.parseEther('15'));
+await tx(users[2].dock.withdraw());assert.equal(await users[0].dock.credits(cfg.accounts[2]),0n);await reject(()=>users[2].dock.withdraw());
+const id2=ethers.id('test2-'+Date.now());await tx(users[1].dock.publish(id2,ethers.id('evidence2')));await tx(users[2].dock.challenge(id2,ethers.id('objection')));await tx(users[3].dock.resolve(id2,1,ethers.id('report')));assert.equal((await users[0].dock.records(id2)).state,3n);
+await tx(users[1].dock.requestExit(id2));await reject(()=>users[1].dock.exit(id2));await p.send('evm_increaseTime',[61]);await p.send('evm_mine',[]);await tx(users[1].dock.exit(id2));assert.equal((await users[0].dock.records(id2)).state,5n);
+const id3=ethers.id('test3-'+Date.now());await tx(users[1].dock.publish(id3,ethers.id('e3')));await tx(users[2].dock.challenge(id3,ethers.id('o3')));await reject(()=>users[4].dock.timeout(id3));await p.send('evm_increaseTime',[301]);await p.send('evm_mine',[]);await tx(users[4].dock.timeout(id3));assert.equal((await users[0].dock.records(id3)).state,1n);assert.equal(await users[0].dock.credits(cfg.accounts[2]),ethers.parseEther('5'));
+console.log('PASS：质押、分成、去重、权限、挑战成功/失败、提款、退出等待期、超时退款');

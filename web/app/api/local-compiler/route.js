@@ -1,0 +1,8 @@
+import {ethers} from 'ethers';
+import {localInfo,executeLocal} from '../../../../adapters/local-solidity.mjs';
+import {sampleRequest} from '../../../../adapters/remix.mjs';
+import {read,write,trustedOrigin} from '../../../../lib/store.mjs';
+import {publication} from '../../../../lib/receipt.mjs';
+export const dynamic='force-dynamic';
+export async function GET(){try{return Response.json({info:await localInfo(),sampleRequest});}catch(e){return Response.json({error:e.message},{status:503});}}
+export async function POST(req){try{trustedOrigin(req);const {input,address,signature,taskId,action}=await req.json();if(action==='preview')return Response.json({observation:await executeLocal(input)});if(typeof taskId!=='string'||taskId.length>100||!ethers.isAddress(address)||JSON.stringify(input).length>150000)return Response.json({error:'请求格式错误'},{status:400});const digest=ethers.id(JSON.stringify(input));if(ethers.verifyMessage(`ProofDock local compile\n${taskId}\n${digest}`,signature).toLowerCase()!==address.toLowerCase())return Response.json({error:'需要使用者钱包签名'},{status:401});const previous=read('executions',taskId);if(previous){if(previous.owner.toLowerCase()!==address.toLowerCase()||ethers.id(JSON.stringify(previous.observation.input))!==digest)return Response.json({error:'任务 ID 已使用'},{status:409});return Response.json({executionId:taskId,observation:previous.observation,publicationPayload:publication(previous.observation,taskId)});}const observation=await executeLocal(input);write('executions',taskId,{id:taskId,owner:address,observation});return Response.json({executionId:taskId,observation,publicationPayload:publication(observation,taskId)});}catch(e){return Response.json({error:e.message},{status:400});}}

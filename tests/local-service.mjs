@@ -1,0 +1,6 @@
+import assert from 'node:assert/strict';import {sampleRequest} from '../adapters/remix.mjs';
+const base='http://127.0.0.1:4320';const compile=input=>fetch(base+'/compile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
+assert.equal((await fetch(base+'/health')).status,200);let r=await compile(sampleRequest);assert.equal(r.status,200);const result=await r.json();assert.equal(result.success,true);assert(result.contracts['Counter.sol'].Counter.abi.some(x=>x.name==='increment'));assert(result.contracts['Counter.sol'].Counter.evm.bytecode.object.length>0);const metadata=JSON.parse(result.contracts['Counter.sol'].Counter.metadata);assert.equal(metadata.settings.evmVersion,'shanghai');assert.equal(metadata.settings.optimizer.enabled,true);assert.equal(metadata.settings.optimizer.runs,200);
+r=await compile({...sampleRequest,version:'v0.8.29'});assert.equal(r.status,400);
+r=await compile({...sampleRequest,sources:{'Unsafe.sol':{urls:['file:///etc/passwd']}}});assert.equal(r.status,400);
+r=await compile({...sampleRequest,sources:{'Broken.sol':{content:'not solidity'}}});assert.equal(r.status,200);assert.equal((await r.json()).success,false);console.log('PASS：实际本地 HTTP 编译、ABI/字节码、元数据中的参数、版本限制、外部源码拒绝、编译错误状态');

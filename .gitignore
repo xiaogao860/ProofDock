@@ -1,0 +1,14 @@
+node_modules/
+web/.next/
+data/*
+!data/.gitkeep
+web/public/deployment.json
+.logs/
+.pids/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+coverage/

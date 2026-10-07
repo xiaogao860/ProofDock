@@ -1,0 +1,28 @@
+{
+  "name": "proofdock",
+  "private": true,
+  "scripts": {
+    "dev": "next dev web -p 4319",
+    "build": "next build web",
+    "chain": "node scripts/chain.mjs",
+    "deploy": "node scripts/deploy.mjs",
+    "test": "node tests/flow.mjs",
+    "validator": "node scripts/validator.mjs",
+    "test:verification": "node tests/verification.mjs",
+    "test:remix": "node tests/remix-route.mjs",
+    "compiler": "node services/solidity.mjs",
+    "test:agent-api": "node tests/agent-api.mjs",
+    "agent:wallet:create": "node scripts/agent-wallet.mjs create",
+    "agent:wallet:status": "node scripts/agent-wallet.mjs status",
+    "agent:compile:publish": "node scripts/agent-compile-publish.mjs"
+  },
+  "dependencies": {
+    "next": "^15.5.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "ethers": "^6.15.0",
+    "ganache": "^7.9.2",
+    "solc": "0.8.30",
+    "@openzeppelin/contracts": "^5.4.0"
+  }
+}
