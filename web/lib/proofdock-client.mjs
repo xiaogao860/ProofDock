@@ -189,12 +189,16 @@ export function createProofDockClient({cfg, ethereum, fetcher = fetch, onEvent =
     emit('delivered', '完整证据已交付', {recordId: id, queryId: result.queryId});
     return result;
   }
-  async function challenge(id, reason) {
-    if (reason.trim().length < 4) throw new Error('请填写至少四个字的质疑理由。');
+  async function challenge(id) {
     const ctx = await context(), record = await ctx.dock.records(id);
     if (![1, 3].includes(Number(record.state))) throw new Error('当前记录状态不能发起新挑战。');
     await approve(ctx, await ctx.dock.BOND());
-    return transaction(ctx, ctx.dock, 'challenge', [id, ethers.id(reason.trim())], '提交质疑摘要并质押挑战保证金');
+    // The existing contract requires a nonzero marker; bind it to the record being reverified.
+    const marker = ethers.solidityPackedKeccak256(
+      ['string', 'uint256', 'address', 'bytes32', 'bytes32'],
+      ['ProofDock reverify v1', cfg.chainId, cfg.dock, id, record.evidence]
+    );
+    return transaction(ctx, ctx.dock, 'challenge', [id, marker], '质押挑战金并发起复验');
   }
   async function act(method, id, args = []) {
     const ctx = await context();

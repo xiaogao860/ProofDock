@@ -81,3 +81,21 @@ await (await signer.sendTransaction({to, data, value})).wait();
 ## 验证
 
 `node tests/agent-api.mjs` 在临时数据库及隔离测试链验证服务搜索、分页参数、摘要隐私、报价、未付款拒绝、付款后读取、错误签名、授权过期和凭证复用，不修改当前演示链。
+
+## 无需理由的挑战
+
+网页与客户端的挑战调用为 `client.challenge(recordId)`，不需要理由参数。钱包检查本地网络、记录状态和余额，必要时授权 DCR，再签署合约挑战交易并质押 BOND（当前 5 DCR）。挑战上链后，后台按原输入自动复编译，不要求挑战者提交新的输入或说明。
+
+直接用 Agent 钱包调用当前合约时，先从 `dock.records(recordId)` 获取 evidence，然后自动生成复验标识：
+
+```js
+const record = await dock.records(recordId);
+const marker = ethers.solidityPackedKeccak256(
+  ['string', 'uint256', 'address', 'bytes32', 'bytes32'],
+  ['ProofDock reverify v1', chainId, dockAddress, recordId, record.evidence]
+);
+// allowance 不足时先 approve(dockAddress, await dock.BOND())，并等待确认。
+await (await dock.challenge(recordId, marker)).wait();
+```
+
+这是兼容现有合约的非零复验标识，写入原 `objection` 字段，不代表使用者填写了主观理由。挑战交易本身由钱包签名，不增加一次独立的文本签名。之后可用 `GET /api/verification?id={recordId}` 查询报告。
