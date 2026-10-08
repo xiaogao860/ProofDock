@@ -1,32 +1,228 @@
 'use client';
-import LocalCompiler from '../components/LocalCompiler';
-import RemixProbe from '../components/RemixProbe';
-import {useState,useEffect,useRef} from 'react';import {ethers} from 'ethers';
-const states=['未发布','有质押 · 未复验','挑战中','裁定支持记录','记录错误','质押已退出'];
-export default function Home(){const [cfg,C]=useState(null),[wallet,W]=useState(''),[rows,R]=useState([]),[tab,T]=useState('records'),[status,S]=useState('连接钱包后开始体验'),[busy,B]=useState(false),[balances,A]=useState({}),[detail,D]=useState(null),[title,H]=useState('Solidity 编译演示记录'),[service,V]=useState('remix'),[selected,I]=useState(''),[reason,J]=useState('输出与约定执行条件不一致'),[payload,P]=useState(null),[verification,F]=useState({worker:{active:false},reports:[]}),[queryTrace,Q]=useState(null),[pendingRead,PR]=useState(null);const queryClock=useRef(null);
-useEffect(()=>{fetch('/deployment.json').then(r=>r.json()).then(config=>{if(config.resetId&&localStorage.getItem('proofdock-reset-id')!==config.resetId){for(const key of ['proofdock-local-publication','proofdock-remix-publication','proofdock-remix-quote'])localStorage.removeItem(key);localStorage.setItem('proofdock-reset-id',config.resetId);}C(config);}).catch(()=>S('请先启动本地链并部署合约'));refresh();const timer=setInterval(()=>{refresh();fetch('/api/verification').then(r=>r.json()).then(F).catch(()=>{});},4000);return()=>clearInterval(timer);},[]);
-useEffect(()=>{if(!window.ethereum)return;const changed=()=>{PR(null);W('');A({});D(null);S('钱包账户或网络已变化，请重新连接');};window.ethereum.on?.('accountsChanged',changed);window.ethereum.on?.('chainChanged',changed);return()=>{window.ethereum.removeListener?.('accountsChanged',changed);window.ethereum.removeListener?.('chainChanged',changed);};},[]);
-useEffect(()=>{if(!detail||!queryClock.current)return;const clock=queryClock.current;const frame=requestAnimationFrame(()=>{Q(prev=>prev?{...prev,displayFrameMs:+(performance.now()-clock.bodyAt).toFixed(1),afterSignatureToFrameMs:+(performance.now()-clock.signedAt).toFixed(1)}:prev);});return()=>cancelAnimationFrame(frame);},[detail]);
-async function refresh(){const r=await fetch('/api');const j=await r.json();if(Array.isArray(j))R(j);}
-function readError(e){const code=e.code||e.info?.error?.code;if(code==='ACTION_REJECTED'||code===4001)return '钱包操作已取消';if(code==='INSUFFICIENT_FUNDS')return '测试 ETH 不足，无法支付网络 gas';const nested=e.info?.error;return nested?.data?.reason||nested?.message||e.reason||e.shortMessage||e.message||'操作失败，请检查钱包网络和余额';}
-async function ensureFunds(token,amount){const {s}=await contracts();const a=await s.getAddress();const balance=await token.balanceOf(a);if(balance<amount)throw Error(`DCR 不足：当前 ${ethers.formatEther(balance)} DCR，本次需要 ${ethers.formatEther(amount)} DCR。请先领取本地测试币。`);if(await s.provider.getBalance(a)===0n)throw Error('测试 ETH 为 0，无法支付授权或交易的 gas。请先补充本地测试 ETH。');}
-async function contracts(){if(!window.ethereum)throw Error('请安装浏览器以太坊钱包');const p=new ethers.BrowserProvider(window.ethereum);if(Number((await p.getNetwork()).chainId)!==31337)throw Error('请切换到 ProofDock 本地链');const s=await p.getSigner();return {s,token:new ethers.Contract(cfg.token,cfg.tokenAbi,s),dock:new ethers.Contract(cfg.dock,cfg.dockAbi,s)};}
-async function update(){const {s,token,dock}=await contracts();const a=await s.getAddress();W(a);A({eth:ethers.formatEther(await s.provider.getBalance(a)),dcr:ethers.formatEther(await token.balanceOf(a)),credit:ethers.formatEther(await dock.credits(a))});await refresh();}
-async function run(fn){B(true);const oldClock=queryClock.current;try{await fn();const started=performance.now();await update();if(queryClock.current!==oldClock)Q(prev=>prev?{...prev,balanceRefreshMs:+(performance.now()-started).toFixed(1)}:prev);}catch(e){S(readError(e))}finally{B(false)}}
-async function connect(){await window.ethereum?.request({method:'eth_requestAccounts'});await update();S('钱包已连接');}
-async function network(){if(!window.ethereum)throw Error('请安装钱包');await window.ethereum.request({method:'wallet_addEthereumChain',params:[{chainId:'0x7a69',chainName:'ProofDock Local',nativeCurrency:{name:'Test Ether',symbol:'ETH',decimals:18},rpcUrls:['http://127.0.0.1:8545']}]});await window.ethereum.request({method:'wallet_switchEthereumChain',params:[{chainId:'0x7a69'}]});}
-async function send(c,method,args=[],label='操作'){if(method==='resolve'){const address=await c.runner.getAddress();const validator=await c.validator();if(address.toLowerCase()!==validator.toLowerCase())throw Error(`当前账户没有裁定权限，请切换到指定验证者 ${validator}。`);const record=await c.records(args[0]);if(Number(record.state)!==2)throw Error('该记录已不处于挑战中，请刷新列表。');}const gas=await c[method].estimateGas(...args);const fee=await c.runner.provider.getFeeData();if(!confirm(`${label}：预计网络 gas ${ethers.formatEther(gas*(fee.maxFeePerGas||fee.gasPrice))} ETH。由当前钱包承担。确认继续？`))throw Error('已取消');S(label+'：等待钱包确认');const tx=await c[method](...args);S('交易确认中 '+tx.hash.slice(0,16));await tx.wait();S(label+'成功');}
-async function approve(token,amount){await ensureFunds(token,amount);const {s}=await contracts();if(await token.allowance(await s.getAddress(),cfg.dock)<amount)await send(token,'approve',[cfg.dock,amount],'授权测试代币');}
-async function publish(){const {s,token,dock}=await contracts();await ensureFunds(token,ethers.parseEther('10'));const data=payload||{title,service,taskId:crypto.randomUUID(),version:'demo-interface-v1',input:{language:'Solidity',source:'// 服务尚未执行'},output:{status:'NOT_EXECUTED'},acceptance:'演示材料，不证明真实编译',createdAt:new Date().toISOString(),demo:true};const evidence=ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(data)));const signature=await s.signMessage(`ProofDock evidence:${evidence}`);const res=await fetch('/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({payload:data,address:await s.getAddress(),signature})});const x=await res.json();if(!res.ok)throw Error(x.error);P(data);await approve(token,ethers.parseEther('10'));await send(dock,'publish',[x.id,x.evidence],'发布记录并质押 10 DCR');P(null);}
-async function query(row,reuse=false,ready=null){const start=performance.now();Q({mode:reuse?'重读已有付款，无扣费':'新付费查询',phase:'准备钱包'});const {s,token,dock}=await contracts();const address=await s.getAddress();let q;const walletMs=performance.now()-start;const prepareStart=performance.now();if(ready){if(ready.address.toLowerCase()!==address.toLowerCase())throw Error('钱包账户已变化，请重新查找付款凭证');q=ready.q;}else if(reuse){S('查找当前钱包已有的链上查询凭证，不发交易');const events=await dock.queryFilter(dock.filters.Queried(null,row.id,address),0,'latest');if(!events.length)throw Error('该钱包没有这条记录的付款凭证，请先付费查询');q=events.at(-1).args.queryId;}else{await approve(token,ethers.parseEther('1'));q=ethers.hexlify(ethers.randomBytes(32));await send(dock,'query',[row.id,q],'付费查询 1 DCR');}const prepareMs=performance.now()-prepareStart;if(!reuse&&!ready){PR({row,q,address});Q({mode:'新付费查询',phase:'付款成功，请点击签名读取',walletMs:+walletMs.toFixed(1),paymentOrLookupMs:+prepareMs.toFixed(1)});S('付款已成功，请点击“签名并读取已付款详情”，不会再次扣费');return;}Q({mode:reuse?'重读已有付款，无扣费':'新付费查询',phase:'等待读取签名',walletMs:+walletMs.toFixed(1),paymentOrLookupMs:+prepareMs.toFixed(1)});S('读取签名已请求；提示未出现时，请点击浏览器右上角 MetaMask 查看待处理请求');const signStart=performance.now();const walletEvents=[{event:'personal_sign_called',elapsedMs:0,at:new Date().toISOString(),visibility:document.visibilityState,focused:document.hasFocus()}];const recordWalletEvent=(event)=>{walletEvents.push({event,elapsedMs:+(performance.now()-signStart).toFixed(1),at:new Date().toISOString(),visibility:document.visibilityState,focused:document.hasFocus()});Q(prev=>({...prev,walletEvents:[...walletEvents]}));};const onFocus=()=>recordWalletEvent('page_focus');const onBlur=()=>recordWalletEvent('page_blur');const onVisibility=()=>recordWalletEvent('visibility_change');window.addEventListener('focus',onFocus);window.addEventListener('blur',onBlur);document.addEventListener('visibilitychange',onVisibility);Q(prev=>({...prev,walletEvents:[...walletEvents]}));let signature;try{signature=await window.ethereum.request({method:'personal_sign',params:[ethers.hexlify(ethers.toUtf8Bytes(`ProofDock detail\n${row.id}\n${q}`)),address.toLowerCase()]});recordWalletEvent('personal_sign_resolved');}catch(e){recordWalletEvent('personal_sign_rejected');Q(prev=>({...prev,phase:'读取签名已取消或失败',walletErrorCode:e.code}));throw e;}finally{window.removeEventListener('focus',onFocus);window.removeEventListener('blur',onBlur);document.removeEventListener('visibilitychange',onVisibility);}const signedAt=performance.now();S('读取签名已返回，正在请求详情…');Q(prev=>({...prev,phase:'请求详情',signatureWaitMs:+(signedAt-signStart).toFixed(1)}));const res=await fetch('/api?'+new URLSearchParams({action:'detail',id:row.id,queryId:q,address,signature}),{cache:'no-store'});const headersAt=performance.now();const x=await res.json();const bodyAt=performance.now();const trace={mode:reuse?'重读已有付款，无扣费':'新付费查询',phase:res.ok?'详情已返回':'读取失败',walletMs:+walletMs.toFixed(1),paymentOrLookupMs:+prepareMs.toFixed(1),signatureWaitMs:+(signedAt-signStart).toFixed(1),signatureToHeadersMs:+(headersAt-signedAt).toFixed(1),responseBodyMs:+(bodyAt-headersAt).toFixed(1),walletEvents,serverTiming:res.headers.get('Server-Timing'),responseBytes:new TextEncoder().encode(JSON.stringify(x)).length,totalToBodyMs:+(bodyAt-start).toFixed(1)};Q(trace);console.info('ProofDock query timing',trace);if(!res.ok)throw Error(x.error);queryClock.current={signedAt,bodyAt};PR(null);D(x);S(`详情已返回：签名后 ${(bodyAt-signedAt).toFixed(0)} 毫秒，材料显示在记录列表下方`);}
+import {useEffect, useRef, useState} from 'react';
+import {ethers} from 'ethers';
+import {createProofDockClient, readableError, STATUS_LABELS} from '../lib/proofdock-client.mjs';
 
-async function act(kind,row){const {token,dock}=await contracts();if(kind==='challenge'){await approve(token,ethers.parseEther('5'));await send(dock,'challenge',[row.id,ethers.id(reason)],'发起挑战 5 DCR');}else if(kind==='requestExit')await send(dock,'requestExit',[row.id],'申请退出，等待 60 秒');else if(kind==='exit')await send(dock,'exit',[row.id],'退出质押');else await send(dock,'timeout',[row.id],'超时结束，退还挑战保证金');}
-return <main><header><div className="brand">◈ ProofDock <small>履约证据港</small></div><div><button onClick={()=>run(network)} disabled={busy}>添加本地链</button> <button className="primary" onClick={()=>run(connect)} disabled={busy}>{wallet?wallet.slice(0,8)+'…'+wallet.slice(-4):'连接钱包'}</button></div></header><section className="hero"><span className="badge">LOCAL TESTNET · 31337</span><h1>让服务记录<br/><em>有证据，有责任。</em></h1><p>自愿发布 · 代币质押 · 付费共享 · 挑战裁定</p><div className="notice">本地资金无实际价值。Remix 真实编译入口已准备，付款暂关闭；自动复验只在挑战后启动。本地 Solidity 编译服务已上线，可免费执行并自愿发布。</div></section><div className="stats"><article><small>钱包 DCR</small><strong>{balances.dcr||'—'}</strong></article><article><small>测试 ETH · gas</small><strong>{balances.eth?Number(balances.eth).toFixed(4):'—'}</strong></article><article><small>可领取 DCR</small><strong>{balances.credit||'—'}</strong></article><article><small>已发布记录</small><strong>{rows.length}</strong></article></div><nav>{[['records','履约记录'],['local','本地编译服务'],['remix','Remix 服务'],['publish','发布与质押'],['assets','我的资产'],['validator','挑战与自动复验']].map(([id,name])=><button className={tab===id?'active':''} key={id} onClick={()=>T(id)}>{name}</button>)}</nav><div className="status">{busy?'◌ ': '● '}{status}</div>
-{tab==='records'&&<>{pendingRead&&<article><h3>付款成功，等待读取</h3><p>请点击下方按钮请求读取签名，不会再次扣费。提示未出现时，点击浏览器右上角 MetaMask 查看待处理请求。</p><button disabled={busy} onClick={()=>run(()=>query(pendingRead.row,false,pendingRead))}>签名并读取已付款详情 · 不扣费</button></article>}{queryTrace&&<article><h3>本次查询分段耗时</h3><p>{queryTrace.mode} · {queryTrace.phase}</p><p>以下单位为毫秒；钱包签名等待包含你操作钱包的时间。签名后到响应头的时间包含浏览器排队、网络与服务器处理。</p><table><thead><tr><th>阶段</th><th>耗时（毫秒）</th></tr></thead><tbody>{[['walletMs','准备钱包'],['paymentOrLookupMs','付款或查找已有凭证'],['signatureWaitMs','等待读取签名返回'],['signatureToHeadersMs','签名返回 → 收到响应头'],['responseBodyMs','读取与解析响应'],['displayFrameMs','解析完成 → 下一显示帧'],['afterSignatureToFrameMs','签名返回 → 下一显示帧'],['balanceRefreshMs','详情返回后的余额刷新']].filter(([key])=>queryTrace[key]!==undefined).map(([key,label])=><tr key={key}><td>{label}</td><td>{queryTrace[key]}</td></tr>)}</tbody></table><p>材料大小：{queryTrace.responseBytes||'—'} 字节。</p><details><summary>服务器内部耗时与原始诊断</summary><pre>{JSON.stringify(queryTrace,null,2)}</pre></details></article>}<div className="heading"><h2>服务与履约记录</h2><button onClick={()=>run(refresh)}>刷新</button></div><div className="providers">{['本地 Solidity','Remix','OneCompiler'].map(x=><article key={x}><h3>{x}</h3><span className="badge">{x==='本地 Solidity'?'实际编译可用 · 本地免费演示':x==='Remix'?'编译入口已准备 · 付款暂关闭':'接口预留 · 未接入'}</span><p>{x==='本地 Solidity'?'固定版本实际编译，已接入发布与挑战复验。':'编译参数、付款凭证与服务签名能力待接入验证。'}</p></article>)}</div>{rows.length===0?<div className="empty">还没有链上记录。连接演示钱包，到“发布与质押”创建第一条。</div>:rows.map(row=><article className="record" key={row.id}><div><span className="badge">{states[row.state]}</span><h3>{row.title}</h3><small>{row.service} · {row.id.slice(0,14)}… · {row.publisher.slice(0,10)}…</small></div><div className="actions">{[1,3].includes(row.state)&&<><button onClick={()=>run(()=>query(row))} disabled={busy}>查询详情 · 1 DCR</button><button onClick={()=>run(()=>query(row,true))} disabled={busy}>重读已付款详情 · 不扣费</button><button onClick={()=>{I(row.id);J('输出与约定执行条件不一致')}}>准备挑战</button></>}{row.state===2&&<button onClick={()=>run(()=>act('timeout',row))}>5 分钟后超时结束</button>}</div>{selected===row.id&&<div className="challenge"><input value={reason} onChange={e=>J(e.target.value)}/><button onClick={()=>run(()=>act('challenge',row))} disabled={busy}>挑战 · 锁定 5 DCR</button></div>}</article>)}{detail&&<article><h3>已付款查询的记录材料</h3><pre>{JSON.stringify(detail,null,2)}</pre><p>公开链上摘要可免费读取；收费内容是本地 API 材料交付。</p></article>}</>}
-{tab==='local'&&<LocalCompiler onPublication={data=>{P(data);H(data.title);V(data.service);T('publish');S('已载入本地实际编译结果，请连接本地链上的同一钱包后自愿质押发布');}}/>}
-{tab==='remix'&&<RemixProbe onPublication={data=>{P(data);H(data.title);V(data.service);T('publish');S('已准备真实响应材料，请切回本地链、连接同一钱包后自愿质押发布');}}/>}
-{tab==='publish'&&<article className="form"><h2>自愿发布，承担记录责任</h2><p>{payload?.demo===false?'已载入实际服务响应。签名并质押 10 DCR 后发布；尚未被挑战复验。':'质押 10 DCR。未载入真实响应时，只生成演示材料。'}</p>{payload&&<><pre>{JSON.stringify(payload,null,2)}</pre><button onClick={()=>P(null)}>清除待发布材料</button></>}<label>记录标题<input disabled={!!payload} value={title} onChange={e=>H(e.target.value)}/></label><label>服务标识<select disabled={!!payload} value={service} onChange={e=>V(e.target.value)}><option value="local-solidity">本地 Solidity 编译</option><option value="remix">Remix</option><option value="onecompiler">OneCompiler（演示）</option></select></label><button className="primary" onClick={()=>run(publish)} disabled={busy||!wallet}>签名材料并质押发布</button><p>签名者是当前发布者，不是第三方平台。查询费的 70% 记给发布者，30% 记给演示平台账户。</p></article>}
-{tab==='assets'&&<article><h2>我的资金与退出</h2><button className="primary" onClick={()=>run(async()=>{const {dock}=await contracts();await send(dock,'withdraw',[],'领取所有可用 DCR')})} disabled={busy}>领取可用资金</button>{rows.filter(x=>x.publisher.toLowerCase()===wallet.toLowerCase()).map(row=><div className="record" key={row.id}><div>{row.title}<p>{states[row.state]}{row.exitAt>0?' · 可退出时间 '+new Date(row.exitAt*1000).toLocaleTimeString():''}</p></div>{[1,3].includes(row.state)&&<button onClick={()=>run(()=>act(row.exitAt?'exit':'requestExit',row))}>{row.exitAt?'完成退出':'申请退出'}</button>}</div>)}<p>争议期间无法退出。裁定和退出先记为可领取金额，再由本人领取。</p></article>}
-{tab==='validator'&&<article><h2>挑战与自动复验</h2><p>自动验证者：{verification.worker.active?'运行中':'未运行或正在启动'}。仅记录进入挑战状态后，使用本地 solc 0.8.30 独立重编译；无需额外支付 Remix 费用。</p><p>结论 1：产物一致，挑战保证金归发布者；2：签名记录与复验产物不一致，质押及保证金归挑战者；3：无法验证，退还挑战保证金。自动验证者承担提交裁定的本地 gas。</p><small>指定验证者：{cfg?.accounts?.[3]}</small><p>这仍是单一指定验证者的本地原型；产物一致性不证明历史服务确实发生，也不证明平台身份。演示记录和不支持的版本会返回无法验证。</p>{verification.reports.map(job=><div key={job.id} className="record"><div><h3>{job.recordId.slice(0,16)}… · {['','支持记录','记录不一致','无法验证'][job.report.outcome]}</h3><p>{job.report.reason}</p><small>{job.status} · 报告哈希 {job.reportHash}</small><details><summary>查看复验报告</summary><pre>{JSON.stringify(job,null,2)}</pre></details></div></div>)}<details><summary>手动测试裁定（备用）</summary><p>仅指定验证者可操作；自动验证正在处理时请勿同时手动提交。</p>{rows.filter(x=>x.state===2).map(row=><div className="record" key={row.id}><h3>{row.title}</h3>{[[1,'支持记录'],[2,'记录错误'],[3,'无法验证']].map(([n,t])=><button key={n} disabled={busy||wallet.toLowerCase()!==cfg?.accounts?.[3]?.toLowerCase()} onClick={()=>run(async()=>{const {dock}=await contracts();await send(dock,'resolve',[row.id,n,ethers.id('MANUAL_DEMO_REPORT:'+n)],'提交手动测试裁定')})}>{t}</button>)}</div>)}</details></article>}
+const VIEWS = [['compile', '服务记录'], ['records', '上链记录'], ['api', 'API 接入'], ['assets', '我的资产']];
+const short = value => value ? `${value.slice(0, 8)}…${value.slice(-5)}` : '—';
+const decimal = value => value == null ? '—' : Number(value).toLocaleString('zh-CN', {maximumFractionDigits: 5});
+const date = value => new Date(value).toLocaleString('zh-CN', {hour12: false});
+const serviceName = service => service?.id === 'local-solidity' ? 'Solidity 编译' : service?.name || '';
+function Json({value, label = '查看完整 JSON'}) { return <details className="json-disclosure"><summary>{label}</summary><pre>{JSON.stringify(value, null, 2)}</pre></details>; }
+function Pill({status, demo}) { return <span className={`pill ${status || ''}`}>{demo ? '示例 · ' : ''}{STATUS_LABELS[status] || status}</span>; }
 
-<footer>ProofDock · 最小本地原型 · 操作者承担网络 gas · 所有测试金额无实际价值</footer></main>}
+export default function Home() {
+  const [view, setView] = useState('compile'), [cfg, setCfg] = useState(null), [client, setClient] = useState(null);
+  const [services, setServices] = useState([]), [records, setRecords] = useState([]), [pagination, setPagination] = useState({total: 0, nextOffset: null});
+  const [filters, setFilters] = useState({service: '', status: ''}), [offset, setOffset] = useState(0);
+  const [parameters, setParameters] = useState(null), [balance, setBalance] = useState(null);
+  const [ownedRecords, setOwnedRecords] = useState([]);
+  const [compiler, setCompiler] = useState(null), [source, setSource] = useState(''), [result, setResult] = useState(null), [draft, setDraft] = useState(null);
+  const [selectedService, setSelectedService] = useState('local-solidity');
+  const [reports, setReports] = useState([]), [online, setOnline] = useState(false);
+  const [busy, setBusy] = useState(false), [notice, setNotice] = useState({text: '', error: false});
+  const [events, setEvents] = useState([]), [modal, setModal] = useState(null), [reason, setReason] = useState('');
+  const [apiSample, setApiSample] = useState(null);
+  const [now, setNow] = useState(Date.now());
+  const lock = useRef(false), scope = useRef({}), clientRef = useRef(null), cfgRef = useRef(null), dialogRef = useRef(null);
+  scope.current = {filters, offset, balance, modal, view};
+  const chosenService = services.find(service => service.id === selectedService);
+  const canCompile = chosenService?.executionStatus === 'local-demo-available' && chosenService.executionEndpoint === '/api/local-compiler';
+  const wallet = balance?.address;
+  const notify = (text, error = false) => setNotice({text, error});
+  function event(item) { setEvents(previous => [...previous.slice(-119), item]); }
+  function navigate(next) { const target = next === 'home' ? 'compile' : next; setNotice({text: '', error: false}); location.hash = target === 'compile' ? '#/' : `#/${target}`; setView(target); window.scrollTo({top:0, behavior:'instant'}); }
+  async function refresh(active = clientRef.current) {
+    if (!active) return;
+    const current = scope.current;
+    const query = new URLSearchParams({limit: '20', offset: String(current.offset)});
+    if (current.filters.service) query.set('serviceId', current.filters.service);
+    if (current.filters.status) query.set('status', current.filters.status);
+    const [catalog, rows, verification] = await Promise.all([
+      active.request('/api/v1/services', {}, false), active.request(`/api/v1/records?${query}`, {}, false), active.request('/api/verification', {}, false)
+    ]);
+    setServices(catalog.services); setRecords(rows.records); setPagination(rows.pagination);
+    setReports(verification.reports); setOnline(true);
+    if (current.modal?.type === 'record') {
+      const snapshot = await active.request(`/api/v1/records/${current.modal.record.id}`, {}, false);
+      setModal(previous => previous?.type === 'record' && previous.record.id === snapshot.record.id ? {...previous, record: snapshot.record, verification: snapshot.verification} : previous);
+    }
+    if (current.balance) {
+      try {
+        const fresh = await active.balances(); setBalance(fresh);
+        if (current.view === 'assets') {
+          let cursor = 0; const owned = [];
+          do {
+            const page = await active.request(`/api/v1/records?limit=100&offset=${cursor}`, {}, false);
+            owned.push(...page.records.filter(row => row.publisher.toLowerCase() === fresh.address.toLowerCase()));
+            cursor = page.pagination.nextOffset;
+          } while (cursor != null);
+          setOwnedRecords(owned);
+        }
+      } catch { setBalance(null); setOwnedRecords([]); }
+    }
+  }
+  useEffect(() => {
+    let mounted = true;
+    const hash = () => { const next = location.hash.slice(2); setView(VIEWS.some(([id]) => id === next) || next === 'agent' ? next : 'compile'); };
+    hash(); window.addEventListener('hashchange', hash);
+    async function initialize() {
+      try {
+        const response = await fetch('/deployment.json', {cache: 'no-store'});
+        if (!response.ok) throw new Error('部署配置不可用，请先启动项目。');
+        const config = await response.json();
+        if (!mounted) return;
+        cfgRef.current = config; setCfg(config);
+        const active = createProofDockClient({cfg: config, ethereum: window.ethereum, onEvent: event});
+        clientRef.current = active; setClient(active);
+        const values = await active.parameters(); if (!mounted) return; setParameters(values);
+        const info = await active.request('/api/local-compiler', {}, false);
+        if (!mounted) return;
+        setCompiler(info); setSource(info.sampleRequest.sources['Counter.sol'].content);
+        try {
+          const saved = JSON.parse(localStorage.getItem('proofdock-draft-v3'));
+          if (saved?.resetId === config.resetId && saved.payload?.demo === false) setDraft(saved);
+          else localStorage.removeItem('proofdock-draft-v3');
+        } catch { /* Storage is optional; actual public records always come from the server. */ }
+        await refresh(active);
+      } catch (error) { if (mounted) { setOnline(false); notify(readableError(error), true); } }
+    }
+    initialize();
+    const timer = setInterval(async () => {
+      setNow(Date.now());
+      try {
+        if (!clientRef.current) return;
+        const response = await fetch('/deployment.json', {cache: 'no-store'});
+        const config = await response.json();
+        if (config.resetId !== cfgRef.current?.resetId) {
+          setBalance(null); setDraft(null); setResult(null); setModal(null);
+          try { localStorage.removeItem('proofdock-draft-v3'); } catch {}
+          clientRef.current.dispose(); clientRef.current = null;
+          notify('网络已重置，正在重新连接。'); await initialize(); return;
+        }
+        await refresh();
+      } catch { if (mounted) setOnline(false); }
+    }, 4000);
+    const changed = () => { setBalance(null); setModal(null); notify('钱包账户或网络已变化，请重新连接。'); };
+    window.ethereum?.on?.('accountsChanged', changed); window.ethereum?.on?.('chainChanged', changed);
+    return () => { mounted = false; clearInterval(timer); window.removeEventListener('hashchange', hash); window.ethereum?.removeListener?.('accountsChanged', changed); window.ethereum?.removeListener?.('chainChanged', changed); clientRef.current?.dispose(); };
+  }, []);
+  useEffect(() => { if (client) refresh().catch(() => setOnline(false)); }, [filters, offset, client]);
+  useEffect(() => { if (client && view === 'assets') refresh().catch(() => setOnline(false)); }, [view, balance?.address, client]);
+  useEffect(() => {
+    if (!modal) return;
+    const previous = document.activeElement;
+    const dialog = dialogRef.current;
+    dialog?.querySelector('button, textarea, input')?.focus();
+    const keydown = e => {
+      if (e.key === 'Escape' && !lock.current) setModal(null);
+      if (e.key === 'Tab' && dialog) {
+        const items = [...dialog.querySelectorAll('button:not(:disabled),textarea,input,a[href]')];
+        const first = items[0], last = items.at(-1);
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+      }
+    };
+    document.addEventListener('keydown', keydown);
+    const overflow = document.body.style.overflow; document.body.style.overflow = 'hidden';
+    return () => { document.removeEventListener('keydown', keydown); document.body.style.overflow = overflow; previous?.focus?.(); };
+  }, [Boolean(modal)]);
+  async function run(title, operation) {
+    if (lock.current) return;
+    if (!clientRef.current) { notify('服务尚未就绪，请稍后重试。', true); return; }
+    lock.current = true; setBusy(true); notify(title);
+    event({id: crypto.randomUUID(), time: new Date().toISOString(), stage: 'task', title, details: {}});
+    try {
+      await operation(clientRef.current);
+      try { await refresh(); } catch { setOnline(false); }
+    } catch (error) {
+      const message = readableError(error); notify(message, true);
+      event({id: crypto.randomUUID(), time: new Date().toISOString(), stage: 'error', title: message, details: {code: error.code, status: error.status}});
+    } finally { lock.current = false; setBusy(false); }
+  }
+  async function compile(active, save) {
+    const input = structuredClone(compiler.sampleRequest);
+    input.sources = {'Counter.sol': {content: source}};
+    const compiled = await active.compile(input, save); setResult(compiled);
+    if (compiled.publicationPayload && compiled.observation.executionStatus === 'COMPILED') {
+      const next = {resetId: cfgRef.current.resetId, owner: compiled.owner, payload: compiled.publicationPayload};
+      setDraft(next); try { localStorage.setItem('proofdock-draft-v3', JSON.stringify(next)); } catch {}
+    }
+    notify(compiled.observation.executionStatus === 'COMPILED' ? (save ? '已保存' : '编译成功') : '编译失败', compiled.observation.executionStatus !== 'COMPILED');
+  }
+  async function openRecord(row) {
+    await run('读取公共记录摘要', async active => {
+      const snapshot = await active.request(`/api/v1/records/${row.id}`);
+      setModal({type: 'record', ...snapshot}); notify('');
+    });
+  }
+  function exportJson(value, filename) {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], {type: 'application/json'}));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  const formatFee = key => parameters ? `${decimal(parameters[key])} DCR` : '读取中…';
+  const myRecords = ownedRecords;
+
+  return <div className="app-shell workspace">
+    <header className="site-header">
+      <a className="wordmark" href="#/" aria-label="服务记录" onClick={() => navigate('home')}><img className="brand-logo" src="/proofdock-logo-transparent.png" alt="" width="48" height="48"/></a>
+      <nav aria-label="主要导航">{VIEWS.map(([id, name]) => <a key={id} href={`#/${id}`} aria-current={view === id ? 'page' : undefined} onClick={() => navigate(id)}>{name}</a>)}</nav>
+      <div className="header-actions"><button className="text-button" disabled={busy || !client} onClick={() => run('切换网络', async active => {await active.addNetwork(); notify('网络已切换。');})}>切换网络</button><button className="wallet-button" disabled={busy || !client} onClick={() => run('连接钱包', async active => {setBalance(await active.connect()); notify('钱包已连接。');})}>{wallet ? short(wallet) : '连接钱包'}</button></div>
+    </header>
+
+    <main className="workspace-main">
+      <nav className="workspace-navigation" aria-label="页面位置"><div>{view !== 'compile' && <><a href="#/" onClick={() => navigate('compile')}>← 服务记录</a><span aria-hidden="true">/</span></>}<span aria-current="page">{VIEWS.find(([id]) => id === view)?.[1] || '调用日志'}</span></div></nav>
+      {notice.text && <div className={`notice ${notice.error ? 'error' : ''}`} role={notice.error ? 'alert' : 'status'} aria-live="polite">{busy && <span className="spinner"/>}{notice.text}</div>}
+
+      {view === 'compile' && <>
+        <div className="page-heading"><h1>服务记录</h1></div>
+        <div className="compile-grid">
+          <div className="service-tabs" aria-label="服务选择">{services.map(service => <button key={service.id} className={`service-option ${selectedService === service.id ? 'selected' : ''}`} disabled={busy} aria-pressed={selectedService === service.id} onClick={() => {setSelectedService(service.id); setResult(null);}}><strong>{serviceName(service)}</strong></button>)}</div>
+          <section className="editor-panel">
+            <div className="panel-topline"><h2>{serviceName(chosenService) || '加载中…'}</h2></div>
+            {canCompile ? <><label className="editor-label" htmlFor="source-code">Counter.sol</label><textarea id="source-code" className="code-editor" value={source} onChange={e => setSource(e.target.value)} spellCheck="false" disabled={busy} aria-label="Counter.sol 源码"/><div className="action-row"><button className="button primary" disabled={busy || !compiler || !online} onClick={() => run('编译', active => compile(active, false))}>编译 <span aria-hidden="true">↗</span></button><button className="button" disabled={busy || !compiler || !online} onClick={() => run('签名保存材料', active => compile(active, true))}>签名保存</button></div></> : <div className="unavailable"><h3>服务暂不可用</h3><button className="button" disabled={busy} onClick={() => {setSelectedService('local-solidity'); setResult(null);}}>切换至 Solidity 编译</button></div>}
+            {canCompile && result && <section className="execution-result"><div className="result-title"><span className={`result-dot ${result.observation.executionStatus === 'COMPILED' ? 'ok' : 'fail'}`}/><h3>{result.observation.executionStatus === 'COMPILED' ? '编译成功' : '编译返回错误'}</h3><span>{result.observation.elapsedMs} ms</span></div><p>{result.executionId ? '已保存' : '未保存'}</p>{result.observation.output.errors?.map((error, i) => <pre className="compiler-diagnostic" key={i}>{error.formattedMessage || error.message}</pre>)}<Json value={result.observation} label="编译结果"/></section>}
+            {canCompile && draft && <section className="publication"><div className="section-label">待发布材料</div><h3>{draft.payload.title}</h3><p>钱包：<code>{short(draft.owner)}</code> · 发布质押 {formatFee('stake')}</p><div className="action-row"><button className="button primary" disabled={busy || !online} onClick={() => run('签名材料并质押发布', async active => {const published = await active.publish(draft.payload, draft.owner); setDraft(null); try {localStorage.removeItem('proofdock-draft-v3');} catch {} notify(published.alreadyPublished ? '记录已发布。' : '发布成功。'); navigate('records');})}>质押发布</button><button className="text-button" disabled={busy} onClick={() => {setDraft(null); try {localStorage.removeItem('proofdock-draft-v3');} catch {}}}>移除待发布材料</button></div></section>}
+          </section>
+        </div>
+      </>}
+
+      {view === 'records' && <>
+        <div className="page-heading split"><div><h1>上链记录</h1></div><button className="button" disabled={busy} onClick={() => run('刷新公共记录', async () => {await refresh(); notify('公共记录已刷新。');})}>刷新记录</button></div>
+        <div className="record-toolbar"><div className="filter-group"><label>服务<select value={filters.service} onChange={e => {setFilters({...filters, service: e.target.value}); setOffset(0);}}><option value="">全部服务</option>{services.map(service => <option value={service.id} key={service.id}>{serviceName(service)}</option>)}</select></label><label>状态<select value={filters.status} onChange={e => {setFilters({...filters, status: e.target.value}); setOffset(0);}}><option value="">全部状态</option>{Object.entries(STATUS_LABELS).filter(([key]) => key !== 'unpublished').map(([key, name]) => <option value={key} key={key}>{name}</option>)}</select></label></div><span>{pagination.total} 条符合条件的记录</span></div>
+        <div className="record-list">{records.map(row => <button className="record-row" key={row.id} onClick={() => openRecord(row)} disabled={busy}><div className="record-main"><Pill status={row.status} demo={row.demo}/><h2>{row.title}</h2><span>{serviceName(services.find(service => service.id === row.serviceId)) || row.serviceId} <i>·</i> 发布者 {short(row.publisher)}</span></div><div className="record-right"><code>{short(row.id)}</code><span>查阅记录 ↗</span></div></button>)}{records.length === 0 && <div className="empty-state"><h2>{online ? '暂无记录' : '服务连接失败'}</h2><button className="button" onClick={() => navigate('compile')}>服务记录</button></div>}</div>
+        <div className="pagination"><button className="button" disabled={offset === 0 || busy} onClick={() => setOffset(Math.max(0, offset - 20))}>上一页</button><span>第 {Math.floor(offset / 20) + 1} 页</span><button className="button" disabled={pagination.nextOffset == null || busy} onClick={() => setOffset(pagination.nextOffset)}>下一页</button></div>
+        <div className="verification-strip"><span>{reports.filter(report => report.status === 'resolved').length} 份已完成报告</span></div>
+      </>}
+
+      {view === 'agent' && <>
+        <div className="page-heading"><h1>调用日志</h1></div>
+        <div className="agent-layout"><aside><h2>调用记录</h2><button className="button primary" onClick={() => navigate('compile')}>服务记录 ↗</button><div className="terms-box"><h3>接口入口</h3><ul className="api-list"><li><code>GET /api/v1/services</code><span>服务目录</span></li><li><code>GET /api/v1/records</code><span>公开记录</span></li><li><code>POST /api/local-compiler</code><span>编译</span></li><li><code>POST /api</code><span>签名存证</span></li></ul><button className="text-button" onClick={() => navigate('api')}>API ↗</button></div></aside><section className="trace-panel"><div className="panel-topline"><h2>操作日志</h2><button className="text-button" disabled={busy} onClick={() => setEvents([])}>清空视图</button></div>{events.length === 0 ? <div className="empty-state"><h3>暂无日志</h3></div> : <ol className="trace-list">{events.map(item => <li key={item.id} className={item.stage === 'error' ? 'trace-error' : ''}><time>{new Date(item.time).toLocaleTimeString('zh-CN', {hour12: false})}</time><div><span className="trace-stage">{item.stage}</span><strong>{item.title}</strong>{Object.keys(item.details).length > 0 && <Json value={item.details} label="详情"/>}</div></li>)}</ol>}</section></div>
+      </>}
+
+      {view === 'api' && <>
+        <div className="page-heading"><h1>API 接入</h1></div>
+        <div className="api-connection"><code>{typeof location === 'undefined' ? '' : location.origin}</code><div className="action-row"><button className="button" disabled={busy || !client} onClick={() => run('测试 API 连接', async active => {setApiSample(await active.request('/api/v1/services')); notify('HTTP 200');})}>测试连接</button><button className="button" onClick={() => navigate('agent')}>调用日志</button></div></div>
+        <div className="api-endpoints">{[['服务目录','GET /api/v1/services'],['上链记录','GET /api/v1/records?limit=20&offset=0'],['记录详情','GET /api/v1/records/{id}'],['查询报价','GET /api/v1/records/{id}/quote?address={wallet}'],['完整材料','POST /api/v1/records/{id}/evidence'],['编译','GET /api/local-compiler · POST /api/local-compiler'],['签名存证','POST /api'],['复验报告','GET /api/verification']].map(([label, endpoint]) => <div key={label}><h2>{label}</h2><code>{endpoint}</code></div>)}</div>
+        <section className="api-example"><h2>编译请求</h2><code>POST /api/local-compiler</code><pre>{JSON.stringify({action:'preview',input:compiler?.sampleRequest},null,2)}</pre></section>
+        <section className="api-example"><h2>签名读取</h2><ol className="api-flow"><li>获取 quote。</li><li>paymentRequired 为 true 时按 transactions 付款。</li><li>签署 readAuthorization.message。</li><li>POST evidence：address、queryId、expiresAt、signature。</li></ol></section>
+        {apiSample && <section className="api-example"><h2>连接响应</h2><Json value={apiSample} label="HTTP 200 · 展开响应"/></section>}
+      </>}
+
+      {view === 'assets' && <>
+        <div className="page-heading"><h1>我的资产</h1></div>
+        {!wallet ? <div className="empty-state"><h2>连接钱包后查看资产</h2></div> : <><div className="asset-stats"><div><span>DCR 余额</span><strong>{decimal(balance.dcr)}</strong></div><div><span>ETH 余额</span><strong>{decimal(balance.eth)}</strong></div><div><span>可领取 DCR</span><strong>{decimal(balance.credit)}</strong></div></div><div className="asset-actions"><code>{wallet}</code><button className="button primary" disabled={busy || Number(balance.credit) <= 0} onClick={() => run('领取资金', async active => {await active.act('withdraw'); notify('领取成功。');})}>领取资金</button></div><h2 className="section-heading">我的发布记录</h2>{myRecords.map(row => <div className="asset-record" key={row.id}><div><Pill status={row.status}/><h3>{row.title}</h3><p>{row.exitAt ? `可退出时间：${date(row.exitAt * 1000)}` : `申请退出后等待 ${parameters?.wait || '—'} 秒`}</p></div>{[1, 3].includes(row.state) && <button className="button" disabled={busy || (row.exitAt > 0 && now < row.exitAt * 1000)} onClick={() => run(row.exitAt ? '退出质押' : '申请退出质押', async active => {await active.act(row.exitAt ? 'exit' : 'requestExit', row.id); notify(row.exitAt ? '质押已退出。' : '退出申请已提交。');})}>{row.exitAt ? (now < row.exitAt * 1000 ? '等待退出时间' : '完成退出') : '申请退出'}</button>}</div>)}</>}
+      </>}
+          </main>
+
+    {modal && <div className="modal-backdrop" onMouseDown={e => {if (e.target === e.currentTarget && !busy) setModal(null);}}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="dialog-title" ref={dialogRef}>
+      <header className="modal-header"><h2 id="dialog-title">{modal.type === 'record' ? '履约记录' : modal.type === 'purchase' ? '读取完整材料' : modal.type === 'challenge' ? '发起挑战' : '程序接入流程'}</h2><button aria-label="关闭弹窗" disabled={busy} onClick={() => setModal(null)}>×</button></header>
+      {notice.error && <div className="notice error" role="alert">{notice.text}</div>}
+      {modal.type === 'record' && <div className="modal-content"><Pill status={modal.record.status} demo={modal.record.demo}/><h3 className="record-title">{modal.record.title}</h3><dl className="evidence-fields"><div><dt>记录编号</dt><dd>{modal.record.id}</dd></div><div><dt>发布者</dt><dd>{modal.record.publisher}</dd></div><div><dt>材料摘要</dt><dd>{modal.record.evidenceHash}</dd></div></dl><div className="action-row"><button className="button primary" disabled={busy || !online} onClick={() => run('读取费用与付款凭证', async active => {const quote = await active.quote(modal.record.id); setModal({...modal, type: 'purchase', quote}); notify(quote.access.paymentRequired ? '查询费已确认。' : '付款凭证已确认。');})}>查看材料</button>{[1, 3].includes(modal.record.state) && <button className="button" disabled={busy} onClick={() => {setReason(''); setModal({...modal, type: 'challenge'});}}>提出挑战 · {formatFee('bond')}</button>}{modal.record.state === 2 && <button className="button" disabled={busy || now < (modal.record.challengedAt + 300) * 1000} onClick={() => run('结束超时挑战', async active => {await active.act('timeout', modal.record.id); notify('挑战已按超时规则结束。');})}>{now < (modal.record.challengedAt + 300) * 1000 ? '等待裁定 / 5 分钟超时' : '超时退款'}</button>}</div>{modal.evidence && <section className="evidence-delivery"><h3>材料</h3><Json value={modal.evidence} label="展开完整证据"/><button className="text-button" onClick={() => exportJson(modal.evidence, `ProofDock-${modal.record.id.slice(0, 10)}.json`)}>导出材料 JSON ↗</button></section>}<section className="report-section"><h3>复验报告</h3>{modal.verification?.length ? modal.verification.map(report => <div className="report-row" key={report.reportHash}><strong>{['', '支持记录', '发现差异', '无法验证'][report.outcome]}</strong><p>{report.reason}</p><code>{short(report.transactionHash)}</code></div>) : <p>暂无复验报告。</p>}</section>{modal.record.state === 2 && wallet?.toLowerCase() === parameters?.validator.toLowerCase() && <details className="manual-resolve"><summary>手动裁定</summary><p>复验处理中，请勿重复提交。</p><div className="action-row">{[[1, '支持记录'], [2, '记录有误'], [3, '无法验证']].map(([outcome, label]) => <button key={outcome} className="button" disabled={busy} onClick={() => run('提交手动裁定', async active => {await active.act('resolve', modal.record.id, [outcome, ethers.id(`MANUAL_DEMO_REPORT:${outcome}`)]); notify('手动裁定已上链。');})}>{label}</button>)}</div></details>}</div>}
+      {modal.type === 'purchase' && <div className="modal-content"><h3>{modal.record.title}</h3><div className="purchase-price"><span>{modal.quote.access.paymentRequired ? '查询费' : '已付款'}</span><strong>{modal.quote.access.paymentRequired ? `${modal.quote.payment.amount} DCR` : '0 DCR'}</strong></div><button className="button primary full" disabled={busy} onClick={() => run('核对付款凭证并读取材料', async active => {const delivered = await active.readEvidence(modal.record.id); setModal({...modal, type: 'record', evidence: delivered.evidence}); notify('材料已读取。');})}>{busy ? '处理中…' : modal.quote.access.paymentRequired ? '支付并读取' : '签名读取'}</button></div>}
+      {modal.type === 'challenge' && <div className="modal-content"><h3>{modal.record.title}</h3><label className="field-label" htmlFor="challenge-reason">挑战理由</label><textarea id="challenge-reason" className="reason-input" value={reason} onChange={e => setReason(e.target.value)} placeholder="输入挑战理由" maxLength={3000}/><div className="purchase-price"><span>挑战保证金</span><strong>{formatFee('bond')}</strong></div><div className="action-row"><button className="button primary" disabled={busy || reason.trim().length < 4} onClick={() => run('发起链上挑战', async active => {const receipt = await active.challenge(modal.record.id, reason); setModal({...modal, type: 'record'}); notify(`挑战已确认，等待指定验证者复验。交易 ${short(receipt.hash)}`);})}>签署挑战交易</button><button className="text-button" disabled={reason.trim().length < 4} onClick={() => exportJson({recordId: modal.record.id, reason: reason.trim(), objectionHash: ethers.id(reason.trim()), createdAt: new Date().toISOString()}, 'ProofDock-质疑说明.json')}>导出质疑说明</button></div></div>}
+      {modal.type === 'api' && <div className="modal-content"><ol className="api-flow"><li>服务目录：<code>GET /api/v1/services</code></li><li>编译：<code>POST /api/local-compiler</code>，传 action=preview 与 input。</li><li>发布：签名执行材料后，<code>POST /api</code> 保存，再由钱包调用 publish。</li><li>读取：取 quote → 必要时付款 → 签署 readAuthorization.message → POST evidence。</li><li>挑战：钱包调用 challenge，再读取 <code>GET /api/verification?id=…</code>。</li></ol><Json value={{baseUrl: typeof location === 'undefined' ? '' : location.origin, chainId: cfg?.chainId, services: '/api/v1/services', records: '/api/v1/records', compiler: '/api/local-compiler', verification: '/api/verification'}} label="查看接入地址"/></div>}
+    </section></div>}
+  </div>;
+}

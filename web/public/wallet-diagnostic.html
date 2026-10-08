@@ -1,0 +1,28 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>钱包签名诊断</title><style>body{font:16px system-ui;background:#141414;color:#eee;max-width:900px;margin:50px auto;padding:20px}button{padding:12px;margin:8px;border-radius:10px}pre{white-space:pre-wrap;background:#222;padding:20px}p{line-height:1.7}</style><h1>钱包签名诊断</h1><p>仅签署带随机编号的诊断文本，不转账、不上链、不调用编译服务。使用当前已连接账户。测试期间请保持本页打开。</p><button id="sign">测试一次简短签名</button><button id="mark" disabled>我已在钱包确认</button><button id="download">下载耗时记录</button><p id="status">准备就绪</p><pre id="log"></pre><script>
+const entries=[];let active=false,start=0,lastTick=performance.now();const log=document.getElementById('log'),status=document.getElementById('status'),sign=document.getElementById('sign'),mark=document.getElementById('mark');
+function add(event,extra={}){entries.push({event,at:new Date().toISOString(),elapsedMs:active?Math.round(performance.now()-start):null,...extra});log.textContent=JSON.stringify(entries,null,2)}
+setInterval(()=>{const now=performance.now();if(active&&now-lastTick>1500)add('页面计时器延迟',{gapMs:Math.round(now-lastTick)});lastTick=now},250);
+for(const event of ['focus','blur'])window.addEventListener(event,()=>{if(active)add(event)});document.addEventListener('visibilitychange',()=>{if(active)add('visibility',{value:document.visibilityState})});
+let signRpcId=null;
+window.addEventListener('message',e=>{
+ if(!active||e.source!==window)return;
+ const envelope=e.data;
+ if(!envelope||typeof envelope!=='object'||!['metamask-inpage','metamask-contentscript'].includes(envelope.target))return;
+ const stream=envelope.data;
+ if(!stream||typeof stream!=='object')return;
+ const rpc=stream.data;
+ if(!rpc||typeof rpc!=='object')return;
+ const messages=Array.isArray(rpc)?rpc:[rpc];
+ for(const message of messages){
+  if(message.method==='personal_sign'){
+   signRpcId=message.id;
+   add('签名请求进入页面通信',{target:envelope.target,stream:stream.name});
+  }else if(signRpcId!==null&&message.id===signRpcId&&('result' in message||'error' in message)){
+   add('页面收到签名响应消息',{target:envelope.target,stream:stream.name,hasResult:'result' in message,hasError:'error' in message});
+  }
+ }
+});
+mark.onclick=()=>add('用户标记已确认');
+sign.onclick=async()=>{if(active)return;sign.disabled=true;try{if(!window.ethereum)throw Error('未检测到钱包');let t=performance.now();const accounts=await window.ethereum.request({method:'eth_accounts'});add('读取账户返回',{durationMs:Math.round(performance.now()-t)});if(!accounts.length)throw Error('请先在主站连接钱包');signRpcId=null;active=true;start=performance.now();lastTick=start;mark.disabled=false;add('personal_sign发出');status.textContent='等待钱包签名；确认后可点击“我已在钱包确认”作时间标记';const message='ProofDock diagnostic only — no payment, no authorization. '+crypto.randomUUID();const hex='0x'+Array.from(new TextEncoder().encode(message),b=>b.toString(16).padStart(2,'0')).join('');await window.ethereum.request({method:'personal_sign',params:[hex,accounts[0]]});add('personal_sign返回');status.textContent='签名返回，总等待 '+Math.round(performance.now()-start)+' 毫秒'}catch(e){add('请求失败',{code:e.code,message:e.message});status.textContent=e.message}finally{active=false;sign.disabled=false;mark.disabled=true}};
+document.getElementById('download').onclick=()=>{const u=URL.createObjectURL(new Blob([JSON.stringify(entries,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=u;a.download='wallet-signature-timing.json';a.click();URL.revokeObjectURL(u)};
+</script></html>

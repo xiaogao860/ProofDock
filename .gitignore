@@ -12,3 +12,4 @@ web/public/deployment.json
 *.pem
 *.key
 coverage/
+work/
